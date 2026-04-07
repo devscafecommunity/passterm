@@ -23,6 +23,7 @@ pub struct App {
     pub show_password_input: bool,
     pub password_input: String,
     pub adding_entry: bool,
+    pub adding_id_mode: bool,
     pub new_entry_id: String,
     pub new_vars: Vec<(String, String)>,
     pub current_var: usize,
@@ -41,6 +42,7 @@ impl App {
             show_password_input: false,
             password_input: String::new(),
             adding_entry: false,
+            adding_id_mode: true,
             new_entry_id: String::new(),
             new_vars: Vec::new(),
             current_var: 0,
@@ -124,6 +126,7 @@ fn handle_key(code: KeyCode, app: &mut App, should_quit: &mut bool) {
             app.show_password_input = false;
             app.password_input.clear();
             app.adding_entry = false;
+            app.adding_id_mode = true;
             app.new_entry_id.clear();
             app.new_vars.clear();
             app.show_secret = false;
@@ -171,10 +174,20 @@ fn handle_key(code: KeyCode, app: &mut App, should_quit: &mut bool) {
                     }
                 }
             } else if app.adding_entry {
-                app.save_entry();
-                app.adding_entry = false;
-                app.new_entry_id.clear();
-                app.new_vars.clear();
+                if app.adding_id_mode {
+                    if !app.new_entry_id.is_empty() {
+                        app.adding_id_mode = false;
+                        app.new_vars = vec![(String::new(), String::new())];
+                        app.current_var = 0;
+                    }
+                } else if !app.new_vars.iter().any(|(k, _)| k.is_empty())
+                    || app.new_vars.iter().any(|(_, v)| !v.is_empty())
+                {
+                    app.save_entry();
+                    app.adding_entry = false;
+                    app.new_entry_id.clear();
+                    app.new_vars.clear();
+                }
             } else if !app.entries.is_empty() && !app.show_secret {
                 app.secret_entry = app.entries[app.selected].clone();
                 app.secret_index = 0;
@@ -184,9 +197,9 @@ fn handle_key(code: KeyCode, app: &mut App, should_quit: &mut bool) {
         KeyCode::Char('a') => {
             if app.vault.is_some() && !app.adding_entry && !app.show_secret {
                 app.adding_entry = true;
+                app.adding_id_mode = true;
                 app.new_entry_id.clear();
-                app.new_vars = vec![(String::new(), String::new())];
-                app.current_var = 0;
+                app.new_vars.clear();
             }
         }
         KeyCode::Char('d') => {
@@ -224,19 +237,38 @@ fn handle_key(code: KeyCode, app: &mut App, should_quit: &mut bool) {
                 }
             }
         }
-        KeyCode::Char('n') if app.adding_entry => {
+        KeyCode::Char('n') if app.adding_entry && !app.adding_id_mode => {
             app.new_vars.push((String::new(), String::new()));
+        }
+        KeyCode::Tab => {
+            if app.adding_entry && !app.adding_id_mode {
+                let idx = app.current_var;
+                let field = if idx % 2 == 0 { 0 } else { 1 };
+                if field == 0 && !app.new_vars.is_empty() {
+                    if let Some((ref mut k, _)) = app.new_vars.get_mut(idx) {
+                        if !k.is_empty() {
+                            app.new_vars[idx].1 = String::new();
+                        }
+                    }
+                }
+            }
         }
         KeyCode::Backspace if app.show_password_input && !app.password_input.is_empty() => {
             app.password_input.pop();
+        }
+        KeyCode::Backspace
+            if app.adding_entry && app.adding_id_mode && !app.new_entry_id.is_empty() =>
+        {
+            app.new_entry_id.pop();
         }
         KeyCode::Char(c) => {
             if app.show_password_input {
                 app.password_input.push(c);
             } else if app.adding_entry {
-                let idx = app.current_var;
-                let field = if idx % 2 == 0 { 0 } else { 1 };
-                if let Some((ref mut k, ref mut v)) = app.new_vars.get_mut(idx) {
+                if app.adding_id_mode {
+                    app.new_entry_id.push(c);
+                } else if let Some((ref mut k, ref mut v)) = app.new_vars.get_mut(app.current_var) {
+                    let field = app.current_var % 2;
                     if field == 0 {
                         k.push(c);
                     } else {
@@ -269,11 +301,10 @@ fn ui(f: &mut Frame, app: &mut App) {
         " Passterm "
     };
 
-    let style = ratatui::style::Style::default().fg(Color::Cyan).bold();
-
     f.render_widget(
         Paragraph::new(title)
-            .style(style)
+            .fg(Color::Cyan)
+            .bold()
             .block(Block::default().borders(Borders::ALL).title(" passterm ")),
         chunks[0],
     );
@@ -297,13 +328,31 @@ fn ui(f: &mut Frame, app: &mut App) {
             );
         }
     } else if app.adding_entry {
-        let input_text = if app.new_entry_id.is_empty() {
-            "Entry ID: _"
+        let text = if app.adding_id_mode {
+            format!("Entry ID: {}", app.new_entry_id)
         } else {
-            app.new_entry_id.as_str()
+            let items: Vec<ListItem> = app
+                .new_vars
+                .iter()
+                .enumerate()
+                .map(|(i, (k, v))| {
+                    let marker = if i == app.current_var { ">" } else { " " };
+                    let val = if v.is_empty() { "_" } else { v.as_str() };
+                    ListItem::new(format!("{} {} = {}", marker, k, val))
+                })
+                .collect();
+            f.render_widget(
+                List::new(items).block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title(" Add Variables "),
+                ),
+                chunks[1],
+            );
+            return;
         };
         f.render_widget(
-            Paragraph::new(input_text)
+            Paragraph::new(text)
                 .fg(Color::Yellow)
                 .block(Block::default().borders(Borders::ALL).title(" Entry ID ")),
             chunks[1],
@@ -366,7 +415,11 @@ fn ui(f: &mut Frame, app: &mut App) {
     let help = if app.vault.is_none() {
         "[Enter] unlock"
     } else if app.adding_entry {
-        "[n] new var | [Enter] save | [Esc] cancel"
+        if app.adding_id_mode {
+            "[Enter] next | [Esc] cancel"
+        } else {
+            "[n] new var | [Enter] save | [Tab] skip key | [Esc] cancel"
+        }
     } else if app.show_secret {
         "[c] copy value | [Enter] next | [Esc] back"
     } else {
