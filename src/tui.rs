@@ -72,10 +72,13 @@ impl App {
                 self.entries = v.entries.keys().cloned().collect();
                 self.folders = v.folders.clone();
                 self.totp_enabled = v.totp_secret.is_some();
+
                 if self.totp_enabled {
+                    self.vault = Some(v);
                     self.show_totp_input = true;
                     return false;
                 }
+
                 self.vault = Some(v);
                 true
             }
