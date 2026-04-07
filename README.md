@@ -11,7 +11,7 @@ Terminal password manager with encrypted vault and environment variable injectio
 ## Installation
 
 ```bash
-cargo install passterm
+cargo install --git https://github.com/devscafecommunity/passterm.git
 ```
 
 Or build from source:
