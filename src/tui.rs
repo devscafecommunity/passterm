@@ -34,6 +34,9 @@ pub struct App {
     pub show_secret: bool,
     pub secret_entry: String,
     pub secret_index: usize,
+    pub totp_enabled: bool,
+    pub show_totp_input: bool,
+    pub totp_input: String,
 }
 
 impl App {
@@ -57,6 +60,9 @@ impl App {
             show_secret: false,
             secret_entry: String::new(),
             secret_index: 0,
+            totp_enabled: false,
+            show_totp_input: false,
+            totp_input: String::new(),
         }
     }
 
@@ -65,11 +71,29 @@ impl App {
             Ok(v) => {
                 self.entries = v.entries.keys().cloned().collect();
                 self.folders = v.folders.clone();
+                self.totp_enabled = v.totp_secret.is_some();
+                if self.totp_enabled {
+                    self.show_totp_input = true;
+                    return false;
+                }
                 self.vault = Some(v);
                 true
             }
             Err(_) => false,
         }
+    }
+
+    pub fn verify_totp(&mut self) -> bool {
+        if let Some(ref v) = self.vault {
+            if let Some(ref secret) = v.totp_secret {
+                if storage::verify_totp(secret, &self.totp_input) {
+                    self.show_totp_input = false;
+                    self.totp_input.clear();
+                    return true;
+                }
+            }
+        }
+        false
     }
 
     pub fn save_entry(&mut self) {
@@ -141,12 +165,19 @@ pub fn run() -> io::Result<()> {
 
 fn handle_key(code: KeyCode, app: &mut App, should_quit: &mut bool) {
     match code {
-        KeyCode::Char('q') if !app.adding_entry && !app.show_password_input && !app.show_secret => {
+        KeyCode::Char('q')
+            if !app.adding_entry
+                && !app.show_password_input
+                && !app.show_totp_input
+                && !app.show_secret =>
+        {
             *should_quit = true;
         }
         KeyCode::Esc => {
             app.show_password_input = false;
             app.password_input.clear();
+            app.show_totp_input = false;
+            app.totp_input.clear();
             app.adding_entry = false;
             app.adding_id_mode = true;
             app.new_entry_id.clear();
@@ -191,7 +222,16 @@ fn handle_key(code: KeyCode, app: &mut App, should_quit: &mut bool) {
             }
         }
         KeyCode::Enter => {
-            if app.vault.is_none() {
+            if app.show_totp_input {
+                if !app.totp_input.is_empty() && app.totp_input.len() == 6 {
+                    if app.verify_totp() {
+                        app.show_password_input = false;
+                        app.password_input.clear();
+                    } else {
+                        app.totp_input.clear();
+                    }
+                }
+            } else if app.vault.is_none() {
                 if !app.show_password_input {
                     app.show_password_input = true;
                 } else if !app.password_input.is_empty() {
@@ -325,7 +365,11 @@ fn handle_key(code: KeyCode, app: &mut App, should_quit: &mut bool) {
             app.new_entry_id.pop();
         }
         KeyCode::Char(c) => {
-            if app.show_password_input {
+            if app.show_totp_input && app.totp_input.len() < 6 {
+                if c.is_ascii_digit() {
+                    app.totp_input.push(c);
+                }
+            } else if app.show_password_input {
                 app.password_input.push(c);
             } else if app.adding_entry {
                 if app.adding_id_mode {
@@ -339,6 +383,9 @@ fn handle_key(code: KeyCode, app: &mut App, should_quit: &mut bool) {
                     }
                 }
             }
+        }
+        KeyCode::Backspace if app.show_totp_input && !app.totp_input.is_empty() => {
+            app.totp_input.pop();
         }
         _ => {}
     }
@@ -354,7 +401,9 @@ fn ui(f: &mut Frame, app: &mut App) {
         ])
         .split(f.area());
 
-    let title = if app.vault.is_none() {
+    let title = if app.show_totp_input {
+        " Passterm - TOTP "
+    } else if app.vault.is_none() {
         " Passterm - Locked "
     } else if app.adding_entry {
         " Passterm - Add Entry "
@@ -372,7 +421,17 @@ fn ui(f: &mut Frame, app: &mut App) {
         chunks[0],
     );
 
-    if app.vault.is_none() {
+    if app.show_totp_input {
+        let code: String = app.totp_input.chars().map(|_| '*').collect();
+        f.render_widget(
+            Paragraph::new(format!("TOTP Code: {}", code)).block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(" Enter 6-digit Code "),
+            ),
+            chunks[1],
+        );
+    } else if app.vault.is_none() {
         if app.show_password_input {
             let masked: String = app.password_input.chars().map(|_| '*').collect();
             f.render_widget(
@@ -490,7 +549,9 @@ fn ui(f: &mut Frame, app: &mut App) {
         );
     }
 
-    let help = if app.vault.is_none() {
+    let help = if app.show_totp_input {
+        "[Enter] verify | [Esc] back"
+    } else if app.vault.is_none() {
         "[Enter] unlock"
     } else if app.adding_entry {
         if app.adding_id_mode {

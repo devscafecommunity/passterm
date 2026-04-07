@@ -15,6 +15,7 @@ pub struct VaultEntry {
 pub struct Vault {
     pub entries: HashMap<String, VaultEntry>,
     pub folders: Vec<String>,
+    pub totp_secret: Option<String>,
 }
 
 impl Default for Vault {
@@ -22,6 +23,7 @@ impl Default for Vault {
         Self {
             entries: HashMap::new(),
             folders: Vec::new(),
+            totp_secret: None,
         }
     }
 }

@@ -123,3 +123,27 @@ pub fn parse_env_file(path: &Path) -> Result<HashMap<String, String>, StorageErr
     }
     Ok(vars)
 }
+
+pub fn verify_totp(secret: &str, code: &str) -> bool {
+    use totp_rs::{Algorithm, Secret, TOTP};
+
+    let secret_bytes = match Secret::Encoded(secret.to_string()).to_bytes() {
+        Ok(bytes) => bytes,
+        Err(_) => return false,
+    };
+
+    let totp = match TOTP::new(
+        Algorithm::SHA1,
+        6,
+        1,
+        30,
+        secret_bytes,
+        Some("passterm".to_string()),
+        "vault".to_string(),
+    ) {
+        Ok(t) => t,
+        Err(_) => return false,
+    };
+
+    totp.check_current(code).unwrap_or(false)
+}
