@@ -291,6 +291,15 @@ fn handle_key(code: KeyCode, app: &mut App, should_quit: &mut bool) {
                 }
             }
         }
+        KeyCode::Char('i') => {
+            if app.vault.is_some() && !app.show_folders && !app.adding_entry && !app.show_secret {
+                app.adding_entry = true;
+                app.adding_id_mode = false;
+                app.new_entry_id = String::new();
+                app.new_vars = vec![(String::new(), String::new())];
+                app.current_var = 0;
+            }
+        }
         KeyCode::Char('n') if app.adding_entry && !app.adding_id_mode => {
             app.new_vars.push((String::new(), String::new()));
         }
