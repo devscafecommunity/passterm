@@ -1,4 +1,5 @@
 use clap::{Parser, Subcommand};
+use passterm_cli::tui;
 use passterm_cli::vault::storage;
 use std::collections::HashMap;
 use std::io::{self, Write};
@@ -20,6 +21,7 @@ enum CliCommand {
     Get { id: String },
     Env { id: String, cmd: Vec<String> },
     Delete { id: String },
+    Ui,
 }
 
 fn main() {
@@ -32,9 +34,10 @@ fn main() {
         Some(CliCommand::Get { id }) => cmd_get(id),
         Some(CliCommand::Env { id, cmd }) => cmd_env(id, cmd),
         Some(CliCommand::Delete { id }) => cmd_delete(id),
-        None => {
-            println!("passterm v{}", env!("CARGO_PKG_VERSION"));
-            println!("Run 'passterm init' to create a vault");
+        Some(CliCommand::Ui) | None => {
+            if let Err(e) = tui::run() {
+                eprintln!("TUI error: {}", e);
+            }
         }
     }
 }

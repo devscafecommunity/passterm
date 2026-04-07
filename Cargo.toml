@@ -20,6 +20,8 @@ rand = "0.8"
 zeroize = { version = "1.7", features = ["derive"] }
 dirs = "5.0"
 thiserror = "1.0"
+ratatui = "0.28"
+crossterm = "0.28"
 
 [dev-dependencies]
 tempfile = "3.10"
