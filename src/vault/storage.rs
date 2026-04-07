@@ -1,8 +1,9 @@
 use crate::vault::crypto;
 use crate::vault::Vault;
 use rand::{rngs::OsRng, RngCore};
+use std::collections::HashMap;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -105,4 +106,20 @@ mod tests {
         let loaded = load_vault(password).expect("load_vault failed");
         assert!(loaded.entries.is_empty());
     }
+}
+
+pub fn parse_env_file(path: &Path) -> Result<HashMap<String, String>, StorageError> {
+    let content = fs::read_to_string(path).map_err(|_| StorageError::ReadError)?;
+    let mut vars = HashMap::new();
+
+    for line in content.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if let Some((k, v)) = line.split_once('=') {
+            vars.insert(k.trim().to_string(), v.trim().to_string());
+        }
+    }
+    Ok(vars)
 }

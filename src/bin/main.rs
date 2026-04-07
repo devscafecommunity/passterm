@@ -107,7 +107,7 @@ fn cmd_add(id: String) {
     };
 
     let vars = read_variables();
-    vault.add_entry(id.clone(), vars);
+    vault.add_entry(id.clone(), None, vars);
 
     if let Err(e) = storage::save_vault(&vault, &password) {
         eprintln!("Failed to save vault: {}", e);

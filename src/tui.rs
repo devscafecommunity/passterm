@@ -19,6 +19,10 @@ pub struct App {
     pub vault: Option<Vault>,
     pub password: String,
     pub entries: Vec<String>,
+    pub folders: Vec<String>,
+    pub current_folder: Option<String>,
+    pub show_folders: bool,
+    pub selected_folder: usize,
     pub selected: usize,
     pub show_password_input: bool,
     pub password_input: String,
@@ -38,6 +42,10 @@ impl App {
             vault: None,
             password: String::new(),
             entries: Vec::new(),
+            folders: Vec::new(),
+            current_folder: None,
+            show_folders: false,
+            selected_folder: 0,
             selected: 0,
             show_password_input: false,
             password_input: String::new(),
@@ -56,6 +64,7 @@ impl App {
         match storage::load_vault(&self.password) {
             Ok(v) => {
                 self.entries = v.entries.keys().cloned().collect();
+                self.folders = v.folders.clone();
                 self.vault = Some(v);
                 true
             }
@@ -66,15 +75,28 @@ impl App {
     pub fn save_entry(&mut self) {
         if let Some(ref mut v) = self.vault {
             if !self.new_entry_id.is_empty() {
+                let folder = if self.show_folders {
+                    let f = Some(self.new_entry_id.clone());
+                    if let Some(ref folder_name) = f {
+                        if !v.folders.contains(folder_name) {
+                            v.add_folder(folder_name.clone());
+                        }
+                    }
+                    f
+                } else {
+                    None
+                };
+
                 let vars: std::collections::HashMap<String, String> = self
                     .new_vars
                     .iter()
                     .filter(|(k, _)| !k.is_empty())
                     .map(|(k, v)| (k.clone(), v.clone()))
                     .collect();
-                v.add_entry(self.new_entry_id.clone(), vars);
+                v.add_entry(self.new_entry_id.clone(), folder, vars);
                 let _ = storage::save_vault(v, &self.password);
                 self.entries = v.entries.keys().cloned().collect();
+                self.folders = v.folders.clone();
             }
         }
     }
@@ -132,7 +154,11 @@ fn handle_key(code: KeyCode, app: &mut App, should_quit: &mut bool) {
             app.show_secret = false;
         }
         KeyCode::Down => {
-            if app.show_secret {
+            if app.show_folders && !app.folders.is_empty() {
+                if app.selected_folder < app.folders.len() - 1 {
+                    app.selected_folder += 1;
+                }
+            } else if app.show_secret {
                 if let Some(v) = app
                     .vault
                     .as_ref()
@@ -152,7 +178,11 @@ fn handle_key(code: KeyCode, app: &mut App, should_quit: &mut bool) {
             }
         }
         KeyCode::Up => {
-            if app.show_secret {
+            if app.show_folders && !app.folders.is_empty() {
+                if app.selected_folder > 0 {
+                    app.selected_folder -= 1;
+                }
+            } else if app.show_secret {
                 app.secret_index = app.secret_index.saturating_sub(1);
             } else if app.adding_entry {
                 app.current_var = app.current_var.saturating_sub(1);
@@ -188,6 +218,10 @@ fn handle_key(code: KeyCode, app: &mut App, should_quit: &mut bool) {
                     app.new_entry_id.clear();
                     app.new_vars.clear();
                 }
+            } else if app.show_folders && !app.folders.is_empty() {
+                app.current_folder = Some(app.folders[app.selected_folder].clone());
+                app.show_folders = false;
+                app.selected = 0;
             } else if !app.entries.is_empty() && !app.show_secret {
                 app.secret_entry = app.entries[app.selected].clone();
                 app.secret_index = 0;
@@ -216,6 +250,26 @@ fn handle_key(code: KeyCode, app: &mut App, should_quit: &mut bool) {
                 if app.selected > 0 && app.selected >= app.entries.len() {
                     app.selected = app.entries.len().saturating_sub(1);
                 }
+            }
+        }
+        KeyCode::Char('b')
+            if app.vault.is_some() && app.current_folder.is_some() && !app.adding_entry =>
+        {
+            app.current_folder = None;
+            app.show_folders = true;
+            app.selected_folder = 0;
+        }
+        KeyCode::Char('f') if app.vault.is_some() && app.show_folders && !app.adding_entry => {
+            app.adding_entry = true;
+            app.adding_id_mode = true;
+            app.new_entry_id.clear();
+            app.new_vars.clear();
+        }
+        KeyCode::Char('g') if app.vault.is_some() && !app.adding_entry && !app.show_secret => {
+            app.show_folders = !app.show_folders;
+            if app.show_folders {
+                app.selected = 0;
+                app.selected_folder = 0;
             }
         }
         KeyCode::Char('c') => {
@@ -357,6 +411,21 @@ fn ui(f: &mut Frame, app: &mut App) {
                 .block(Block::default().borders(Borders::ALL).title(" Entry ID ")),
             chunks[1],
         );
+    } else if app.show_folders && !app.folders.is_empty() {
+        let items: Vec<ListItem> = app
+            .folders
+            .iter()
+            .enumerate()
+            .map(|(i, f)| {
+                let marker = if i == app.selected_folder { ">" } else { " " };
+                ListItem::new(format!("{} 📁 {}", marker, f))
+            })
+            .collect();
+
+        f.render_widget(
+            List::new(items).block(Block::default().borders(Borders::ALL).title(" Folders ")),
+            chunks[1],
+        );
     } else if app.show_secret {
         let entry_id = &app.secret_entry;
         if let Some(v) = app.vault.as_ref().and_then(|v| v.entries.get(entry_id)) {
@@ -416,14 +485,18 @@ fn ui(f: &mut Frame, app: &mut App) {
         "[Enter] unlock"
     } else if app.adding_entry {
         if app.adding_id_mode {
-            "[Enter] next | [Esc] cancel"
+            "[Enter] create | [Esc] cancel"
         } else {
             "[n] new var | [Enter] save | [Tab] skip key | [Esc] cancel"
         }
     } else if app.show_secret {
         "[c] copy value | [Enter] next | [Esc] back"
+    } else if app.current_folder.is_some() {
+        "[Enter] view | [a] add | [b] back to folders | [q] quit"
+    } else if app.show_folders {
+        "[Enter] select folder | [f] new folder | [g] back to entries"
     } else {
-        "[Enter] view | [a] add | [d] delete | [q] quit"
+        "[Enter] view | [a] add | [d] delete | [g] folders | [q] quit"
     };
 
     f.render_widget(
