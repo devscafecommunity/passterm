@@ -5,10 +5,11 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
+use ratatui::prelude::Stylize;
 use ratatui::{
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout},
-    style::{Color, Style},
+    style::Color,
     widgets::{Block, Borders, List, ListItem, Paragraph},
     Frame, Terminal,
 };
@@ -26,8 +27,8 @@ pub struct App {
     pub new_vars: Vec<(String, String)>,
     pub current_var: usize,
     pub show_secret: bool,
-    pub secret_key: String,
-    pub secret_value: String,
+    pub secret_entry: String,
+    pub secret_index: usize,
 }
 
 impl App {
@@ -44,19 +45,35 @@ impl App {
             new_vars: Vec::new(),
             current_var: 0,
             show_secret: false,
-            secret_key: String::new(),
-            secret_value: String::new(),
+            secret_entry: String::new(),
+            secret_index: 0,
         }
     }
 
     pub fn unlock(&mut self) -> bool {
         match storage::load_vault(&self.password) {
-            Ok(vault) => {
-                self.entries = vault.entries.keys().cloned().collect();
-                self.vault = Some(vault);
+            Ok(v) => {
+                self.entries = v.entries.keys().cloned().collect();
+                self.vault = Some(v);
                 true
             }
             Err(_) => false,
+        }
+    }
+
+    pub fn save_entry(&mut self) {
+        if let Some(ref mut v) = self.vault {
+            if !self.new_entry_id.is_empty() {
+                let vars: std::collections::HashMap<String, String> = self
+                    .new_vars
+                    .iter()
+                    .filter(|(k, _)| !k.is_empty())
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect();
+                v.add_entry(self.new_entry_id.clone(), vars);
+                let _ = storage::save_vault(v, &self.password);
+                self.entries = v.entries.keys().cloned().collect();
+            }
         }
     }
 }
@@ -74,11 +91,10 @@ pub fn run() -> io::Result<()> {
     loop {
         terminal.draw(|f| ui(f, &mut app))?;
 
-        if event::poll(std::time::Duration::from_millis(16))? {
-            let evt = event::read()?;
-            if let Event::Key(key) = evt {
+        if event::poll(std::time::Duration::from_millis(50))? {
+            if let Event::Key(key) = event::read()? {
                 if key.kind == KeyEventKind::Press {
-                    handle_key(key.code, key.modifiers, &mut app, &mut should_quit);
+                    handle_key(key.code, &mut app, &mut should_quit);
                 }
             }
         }
@@ -99,47 +115,43 @@ pub fn run() -> io::Result<()> {
     Ok(())
 }
 
-fn handle_key(
-    code: KeyCode,
-    _modifiers: event::KeyModifiers,
-    app: &mut App,
-    should_quit: &mut bool,
-) {
+fn handle_key(code: KeyCode, app: &mut App, should_quit: &mut bool) {
     match code {
         KeyCode::Char('q') if !app.adding_entry && !app.show_password_input && !app.show_secret => {
             *should_quit = true;
         }
-        KeyCode::Esc if app.show_password_input => {
+        KeyCode::Esc => {
             app.show_password_input = false;
             app.password_input.clear();
-        }
-        KeyCode::Esc if app.adding_entry => {
             app.adding_entry = false;
             app.new_entry_id.clear();
             app.new_vars.clear();
-        }
-        KeyCode::Esc if app.show_secret => {
             app.show_secret = false;
-            app.secret_key.clear();
-            app.secret_value.clear();
         }
         KeyCode::Down => {
-            if app.entries.is_empty() {
-                return;
-            }
-            if app.adding_entry {
+            if app.show_secret {
+                if let Some(v) = app
+                    .vault
+                    .as_ref()
+                    .and_then(|v| v.entries.get(&app.secret_entry))
+                {
+                    let total = v.variables.len();
+                    if app.secret_index < total.saturating_sub(1) {
+                        app.secret_index += 1;
+                    }
+                }
+            } else if app.adding_entry {
                 if app.current_var < app.new_vars.len().saturating_sub(1) {
                     app.current_var += 1;
                 }
-            } else if app.selected < app.entries.len() - 1 {
+            } else if !app.entries.is_empty() && app.selected < app.entries.len() - 1 {
                 app.selected += 1;
             }
         }
         KeyCode::Up => {
-            if app.entries.is_empty() {
-                return;
-            }
-            if app.adding_entry {
+            if app.show_secret {
+                app.secret_index = app.secret_index.saturating_sub(1);
+            } else if app.adding_entry {
                 app.current_var = app.current_var.saturating_sub(1);
             } else if app.selected > 0 {
                 app.selected -= 1;
@@ -158,16 +170,15 @@ fn handle_key(
                         app.password_input.clear();
                     }
                 }
-            } else if !app.entries.is_empty() && !app.adding_entry {
-                let entry_id = app.entries[app.selected].clone();
-                let vault_ref = app.vault.as_ref().unwrap();
-                if let Some(entry) = vault_ref.entries.get(&entry_id) {
-                    app.show_secret = true;
-                    if let Some((key, val)) = entry.variables.iter().next() {
-                        app.secret_key = key.clone();
-                        app.secret_value = val.clone();
-                    }
-                }
+            } else if app.adding_entry {
+                app.save_entry();
+                app.adding_entry = false;
+                app.new_entry_id.clear();
+                app.new_vars.clear();
+            } else if !app.entries.is_empty() && !app.show_secret {
+                app.secret_entry = app.entries[app.selected].clone();
+                app.secret_index = 0;
+                app.show_secret = true;
             }
         }
         KeyCode::Char('a') => {
@@ -178,18 +189,59 @@ fn handle_key(
                 app.current_var = 0;
             }
         }
-        KeyCode::Char('n') if app.adding_entry => {
-            app.new_vars.push((String::new(), String::new()));
-        }
-        KeyCode::Char('d') if app.vault.is_some() && !app.adding_entry => {
-            if !app.entries.is_empty() {
+        KeyCode::Char('d') => {
+            if app.vault.is_some()
+                && !app.adding_entry
+                && !app.show_secret
+                && !app.entries.is_empty()
+            {
                 let entry_id = app.entries.remove(app.selected);
                 if let Some(ref mut v) = app.vault {
                     v.remove_entry(&entry_id);
                     let _ = storage::save_vault(v, &app.password);
                 }
                 if app.selected > 0 && app.selected >= app.entries.len() {
-                    app.selected = app.entries.len() - 1;
+                    app.selected = app.entries.len().saturating_sub(1);
+                }
+            }
+        }
+        KeyCode::Char('c') => {
+            use std::process::Command as ProcCommand;
+            if app.show_secret {
+                if let Some(v) = app
+                    .vault
+                    .as_ref()
+                    .and_then(|v| v.entries.get(&app.secret_entry))
+                {
+                    if let Some((_, val)) = v.variables.iter().nth(app.secret_index) {
+                        let _ = ProcCommand::new("sh")
+                            .args([
+                                "-c",
+                                &format!("echo '{}' | xclip -selection clipboard", val),
+                            ])
+                            .output();
+                    }
+                }
+            }
+        }
+        KeyCode::Char('n') if app.adding_entry => {
+            app.new_vars.push((String::new(), String::new()));
+        }
+        KeyCode::Backspace if app.show_password_input && !app.password_input.is_empty() => {
+            app.password_input.pop();
+        }
+        KeyCode::Char(c) => {
+            if app.show_password_input {
+                app.password_input.push(c);
+            } else if app.adding_entry {
+                let idx = app.current_var;
+                let field = if idx % 2 == 0 { 0 } else { 1 };
+                if let Some((ref mut k, ref mut v)) = app.new_vars.get_mut(idx) {
+                    if field == 0 {
+                        k.push(c);
+                    } else {
+                        v.push(c);
+                    }
                 }
             }
         }
@@ -214,59 +266,80 @@ fn ui(f: &mut Frame, app: &mut App) {
     } else if app.show_secret {
         " Passterm - View Secret "
     } else {
-        " Passterm - Main "
+        " Passterm "
     };
+
+    let style = ratatui::style::Style::default().fg(Color::Cyan).bold();
 
     f.render_widget(
         Paragraph::new(title)
-            .style(Style::default().fg(Color::Cyan))
-            .block(Block::default().borders(Borders::ALL).title(".pass")),
+            .style(style)
+            .block(Block::default().borders(Borders::ALL).title(" passterm ")),
         chunks[0],
     );
 
     if app.vault.is_none() {
         if app.show_password_input {
-            let pw: String = app.password_input.chars().map(|_| '*').collect();
+            let masked: String = app.password_input.chars().map(|_| '*').collect();
             f.render_widget(
-                Paragraph::new(format!("Password: {}", pw))
-                    .style(Style::default().fg(Color::White))
-                    .block(
-                        Block::default()
-                            .borders(Borders::ALL)
-                            .title("Enter Password"),
-                    ),
+                Paragraph::new(format!("Password: {}", masked)).block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title(" Enter Master Password "),
+                ),
                 chunks[1],
             );
         } else {
             f.render_widget(
-                Paragraph::new("Press Enter to unlock (enter password)")
-                    .style(Style::default().fg(Color::White))
+                Paragraph::new("Press ENTER to unlock vault")
                     .block(Block::default().borders(Borders::ALL)),
                 chunks[1],
             );
         }
     } else if app.adding_entry {
-        let items: Vec<ListItem> = app
-            .new_vars
-            .iter()
-            .enumerate()
-            .map(|(i, (k, v))| {
-                let marker = if i == 0 { ">" } else { " " };
-                ListItem::new(format!("{} {} = {}", marker, k, v))
-            })
-            .collect();
-
+        let input_text = if app.new_entry_id.is_empty() {
+            "Entry ID: _"
+        } else {
+            app.new_entry_id.as_str()
+        };
         f.render_widget(
-            List::new(items)
-                .style(Style::default().fg(Color::White))
-                .block(Block::default().borders(Borders::ALL).title("Add Secrets")),
+            Paragraph::new(input_text)
+                .fg(Color::Yellow)
+                .block(Block::default().borders(Borders::ALL).title(" Entry ID ")),
             chunks[1],
         );
     } else if app.show_secret {
+        let entry_id = &app.secret_entry;
+        if let Some(v) = app.vault.as_ref().and_then(|v| v.entries.get(entry_id)) {
+            let items: Vec<ListItem> = v
+                .variables
+                .iter()
+                .enumerate()
+                .map(|(i, (k, val))| {
+                    let marker = if i == app.secret_index { ">" } else { " " };
+                    let shown = if i == app.secret_index {
+                        val.as_str()
+                    } else {
+                        "*****"
+                    };
+                    ListItem::new(format!("{} {} = {}", marker, k, shown))
+                })
+                .collect();
+
+            f.render_widget(
+                List::new(items).block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title(format!(" {} ", entry_id)),
+                ),
+                chunks[1],
+            );
+        }
+    } else if app.entries.is_empty() {
         f.render_widget(
-            Paragraph::new(format!("{} = {}", app.secret_key, app.secret_value))
-                .style(Style::default().fg(Color::Yellow))
-                .block(Block::default().borders(Borders::ALL).title("Secret")),
+            Paragraph::new("No entries. Press 'a' to add one.")
+                .fg(Color::DarkGray)
+                .block(Block::default().borders(Borders::ALL)),
             chunks[1],
         );
     } else {
@@ -281,9 +354,11 @@ fn ui(f: &mut Frame, app: &mut App) {
             .collect();
 
         f.render_widget(
-            List::new(items)
-                .style(Style::default().fg(Color::White))
-                .block(Block::default().borders(Borders::ALL).title("Environments")),
+            List::new(items).block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(" Environments "),
+            ),
             chunks[1],
         );
     }
@@ -291,16 +366,16 @@ fn ui(f: &mut Frame, app: &mut App) {
     let help = if app.vault.is_none() {
         "[Enter] unlock"
     } else if app.adding_entry {
-        "[Enter] save | [n] new var | [Esc] cancel"
+        "[n] new var | [Enter] save | [Esc] cancel"
     } else if app.show_secret {
-        "[Esc] close"
+        "[c] copy value | [Enter] next | [Esc] back"
     } else {
         "[Enter] view | [a] add | [d] delete | [q] quit"
     };
 
     f.render_widget(
         Paragraph::new(help)
-            .style(Style::default().fg(Color::DarkGray))
+            .fg(Color::DarkGray)
             .block(Block::default().borders(Borders::ALL)),
         chunks[2],
     );
