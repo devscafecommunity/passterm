@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+pub mod crypto;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VaultEntry {
     pub id: String,

@@ -1,3 +1,2 @@
 pub mod vault;
-
-pub use crate::vault::{Vault, VaultEntry};
+pub use vault::{crypto, Vault, VaultEntry};
