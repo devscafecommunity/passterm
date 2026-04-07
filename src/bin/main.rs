@@ -1,5 +1,5 @@
 use clap::{Parser, Subcommand};
-use passterm::vault::storage;
+use passterm_cli::vault::storage;
 use std::collections::HashMap;
 use std::io::{self, Write};
 use std::process::Command as ProcCommand;
