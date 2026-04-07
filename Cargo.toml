@@ -1,5 +1,5 @@
 [package]
-name = "passterm"
+name = "passterm-cli"
 version = "0.1.0"
 edition = "2021"
 authors = ["PassTerm Team"]
